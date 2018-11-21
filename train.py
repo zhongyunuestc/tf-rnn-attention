@@ -9,34 +9,42 @@ from __future__ import print_function, division
 
 import numpy as np
 import tensorflow as tf
-from keras.datasets import imdb
+#from keras.datasets import imdb
 from tensorflow.contrib.rnn import GRUCell
 from tensorflow.python.ops.rnn import bidirectional_dynamic_rnn as bi_rnn
 from tqdm import tqdm
 
 from attention import attention
-from utils import get_vocabulary_size, fit_in_vocabulary, zero_pad, batch_generator
+from utils import get_vocabulary_size, fit_in_vocabulary, zero_pad, batch_generator,load_data
 
 NUM_WORDS = 10000
 INDEX_FROM = 3
-SEQUENCE_LENGTH = 250
+SEQUENCE_LENGTH = 20
 EMBEDDING_DIM = 100
 HIDDEN_SIZE = 150
 ATTENTION_SIZE = 50
 KEEP_PROB = 0.8
-BATCH_SIZE = 256
-NUM_EPOCHS = 3  # Model easily overfits without pre-trained words embeddings, that's why train for a few epochs
+BATCH_SIZE = 128
+NUM_EPOCHS = 5  # Model easily overfits without pre-trained words embeddings, that's why train for a few epochs
 DELTA = 0.5
 MODEL_PATH = './model'
-
+vocabulary_size = 21128
 # Load the data set
-(X_train, y_train), (X_test, y_test) = imdb.load_data(num_words=NUM_WORDS, index_from=INDEX_FROM)
-
+#(X_train, y_train), (X_test, y_test) = imdb.load_data(num_words=NUM_WORDS, index_from=INDEX_FROM)
+X_train, y_train = load_data("/home/zeuszhong/train.tsv")
+X_test, y_test = load_data("/home/zeuszhong/test.tsv")
 # Sequences pre-processing
-vocabulary_size = get_vocabulary_size(X_train)
-X_test = fit_in_vocabulary(X_test, vocabulary_size)
+
 X_train = zero_pad(X_train, SEQUENCE_LENGTH)
 X_test = zero_pad(X_test, SEQUENCE_LENGTH)
+
+print (X_train)
+print (X_test)
+
+
+def create_initializer(initializer_range=0.02):
+  """Creates a `truncated_normal_initializer` with the given range."""
+  return tf.truncated_normal_initializer(stddev=initializer_range)
 
 # Different placeholders
 with tf.name_scope('Inputs'):
@@ -47,7 +55,9 @@ with tf.name_scope('Inputs'):
 
 # Embedding layer
 with tf.name_scope('Embedding_layer'):
-    embeddings_var = tf.Variable(tf.random_uniform([vocabulary_size, EMBEDDING_DIM], -1.0, 1.0), trainable=True)
+    #embeddings_var = tf.Variable(tf.random_uniform([vocabulary_size, EMBEDDING_DIM], -1.0, 1.0), trainable=True)
+    embeddings_var = tf.get_variable(name="word_embedding_name",shape=[vocabulary_size, EMBEDDING_DIM],
+                                     initializer=create_initializer(0.02))
     tf.summary.histogram('embeddings_var', embeddings_var)
     batch_embedded = tf.nn.embedding_lookup(embeddings_var, batch_ph)
 
@@ -85,8 +95,7 @@ with tf.name_scope('Metrics'):
 merged = tf.summary.merge_all()
 
 # Batch generators
-train_batch_generator = batch_generator(X_train, y_train, BATCH_SIZE)
-test_batch_generator = batch_generator(X_test, y_test, BATCH_SIZE)
+train_batch_generator = batch_generator(X_train, y_train, BATCH_SIZE,"train")
 
 train_writer = tf.summary.FileWriter('./logdir/train', accuracy.graph)
 test_writer = tf.summary.FileWriter('./logdir/test', accuracy.graph)
@@ -120,25 +129,23 @@ if __name__ == "__main__":
                 accuracy_train += acc
                 loss_train = loss_tr * DELTA + loss_train * (1 - DELTA)
                 train_writer.add_summary(summary, b + num_batches * epoch)
-            accuracy_train /= num_batches
+            accuracy_train /= (num_batches+1e-7)
 
             # Testing
-            num_batches = X_test.shape[0] // BATCH_SIZE
-            for b in tqdm(range(num_batches)):
-                x_batch, y_batch = next(test_batch_generator)
-                seq_len = np.array([list(x).index(0) + 1 for x in x_batch])  # actual lengths of sequences
-                loss_test_batch, acc, summary = sess.run([loss, accuracy, merged],
+            test_batch_generator = batch_generator(X_test, y_test, BATCH_SIZE, "test")
+            x_batch, y_batch = next(test_batch_generator)
+            seq_len = np.array([list(x).index(0) + 1 for x in x_batch])  # actual lengths of sequences
+            loss_test_batch, acc, summary = sess.run([loss, accuracy, merged],
                                                          feed_dict={batch_ph: x_batch,
                                                                     target_ph: y_batch,
                                                                     seq_len_ph: seq_len,
                                                                     keep_prob_ph: 1.0})
-                accuracy_test += acc
-                loss_test += loss_test_batch
-                test_writer.add_summary(summary, b + num_batches * epoch)
-            accuracy_test /= num_batches
-            loss_test /= num_batches
+            accuracy_test += acc
+            loss_test += loss_test_batch
+            test_writer.add_summary(summary, b + num_batches * epoch)
+            #print (accuracy_test, loss_test)
 
-            print("loss: {:.3f}, val_loss: {:.3f}, acc: {:.3f}, val_acc: {:.3f}".format(
+            print("train loss: {:.3f}, val_loss: {:.3f}, train acc: {:.3f}, val_acc: {:.3f}".format(
                 loss_train, loss_test, accuracy_train, accuracy_test
             ))
         train_writer.close()
